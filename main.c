@@ -28,9 +28,8 @@ int builtin_history(int argc, char **argv);
 char **parse_input(const char *input_line_const, int *arg_count);
 void free_parsed_args(char **args);
 
-// --- Structures for Pipeline (forward declare Pipeline for free_pipeline_resources) ---
-typedef struct Pipeline Pipeline; // <<< Forward declaration of struct Pipeline
-void free_pipeline_resources(Pipeline *pipeline); // <<< ADDED: Forward declaration
+typedef struct Pipeline Pipeline;
+void free_pipeline_resources(Pipeline *pipeline);
 
 typedef int (*builtin_handler_func)(int argc, char **argv);
 
@@ -419,10 +418,6 @@ Pipeline* parse_line_into_pipeline(const char *line_buffer_const) {
                  (current_segment_str == line_copy && next_pipe_char && strlen(next_pipe_char + 1) == 0 && strlen(start)==0) || // " | "
                  (next_pipe_char && !*(next_pipe_char +1) && strlen(start)==0) // "cmd | " (empty segment after pipe)
                 ) {
-                // Check if it is truly an empty segment that's problematic
-                // "cmd | " -> next_pipe_char points to |, *start is empty.
-                // " | cmd" -> current_segment_str points to line_copy, *start empty, next_pipe_char exists
-                // "cmd1 | | cmd2" -> first iter "cmd1", second iter *start empty, next_pipe_char exists
                 if (next_pipe_char) { // An actual pipe character was involved with this empty segment
                     fprintf(stderr, "bash: syntax error near unexpected token `|'\n");
                     syntax_error_in_pipeline = true;
@@ -439,7 +434,6 @@ Pipeline* parse_line_into_pipeline(const char *line_buffer_const) {
              }
              pipeline->num_segments++;
         }
-
 
         if (next_pipe_char) {
             current_segment_str = next_pipe_char + 1;
@@ -566,18 +560,13 @@ int execute_pipeline(Pipeline *pipeline) {
 
         if (redirection_error) {
             last_cmd_status = cmd->exit_status;
-            // Close any FDs that were successfully opened for redirection before the error
             if (user_redirect_in_fd != -1 && current_cmd_stdin != user_redirect_in_fd) close(user_redirect_in_fd); // Only if not assigned
             if (user_redirect_out_fd != -1 && current_cmd_stdout != user_redirect_out_fd) close(user_redirect_out_fd);
             if (user_redirect_err_fd != -1 && current_cmd_stderr != user_redirect_err_fd) close(user_redirect_err_fd);
             
-            // If this command was supposed to write to a pipe, that pipe is now broken for the next command.
-            // Close the write end if it was assigned.
             if (current_cmd_stdout == pipe_fds[1] && pipe_fds[1] != -1) {
                 close(pipe_fds[1]); pipe_fds[1] = -1;
             }
-            // The read end (next_input_fd_temp / pipe_fds[0]) will be handled by parent_fd_management.
-            // If it's still open, the next command will read EOF.
         } else if (cmd->arg_count == 0 && !(cmd->input_file || cmd->output_file_stdout || cmd->output_file_stderr)) {
              cmd->exit_status = 0; last_cmd_status = 0;
         } else if (cmd->arg_count == 0) { 
@@ -591,7 +580,6 @@ int execute_pipeline(Pipeline *pipeline) {
             if (dup2(current_cmd_stdout, STDOUT_FILENO) == -1) perror("dup2 stdout for builtin");
             if (dup2(current_cmd_stderr, STDERR_FILENO) == -1) perror("dup2 stderr for builtin");
 
-            // Close the FDs that were duped, if they are not the original shell FDs or input_fd_for_current_cmd (pipe from prev)
             if (current_cmd_stdin != shell_original_stdin && current_cmd_stdin != input_fd_for_current_cmd) close(current_cmd_stdin);
             if (current_cmd_stdout != shell_original_stdout && current_cmd_stdout != (pipe_fds[1] == -1 ? -2 : pipe_fds[1])) close(current_cmd_stdout); // -2 to ensure not equal if pipe_fds[1] is -1
             if (current_cmd_stderr != shell_original_stderr) close(current_cmd_stderr);
@@ -625,10 +613,6 @@ int execute_pipeline(Pipeline *pipeline) {
                     if (!is_last_cmd && next_input_fd_temp != -1 && next_input_fd_temp == pipe_fds[0]) { 
                         close(next_input_fd_temp); 
                     }
-                    // Close original user redirection FDs if they were different from what was duped
-                    // (they should have been closed when current_cmd_std* was assigned if different)
-                    // The FDs current_cmd_std* themselves are closed after dup2.
-
                     execv(exe_path, cmd->args);
                     fprintf(stderr, "%s: %s\n", cmd->args[0], strerror(errno));
                     free(exe_path); exit(errno == ENOENT ? 127 : 126); // 127 for not found, 126 for other exec errors
@@ -636,21 +620,13 @@ int execute_pipeline(Pipeline *pipeline) {
                 free(exe_path);
             }
         }
-        // last_cmd_status updated inside blocks for builtins/external for immediate effect on next loop if needed.
-        // For external commands, waitpid later will set final status. This `last_cmd_status` is more like a "provisional" one.
-
-    // parent_fd_management:
         if (input_fd_for_current_cmd != shell_original_stdin) {
             close(input_fd_for_current_cmd);
         }
-        // Close user redirect FDs that were specifically assigned to current_cmd_std*
-        // No, these are closed by child/builtin logic or were never current_cmd_std*.
-        // Parent closes pipe ends it's done with.
         if (current_cmd_stdout == pipe_fds[1] && pipe_fds[1] != -1) { 
             close(pipe_fds[1]); 
             pipe_fds[1] = -1;
         } else if (pipe_fds[1] != -1 && current_cmd_stdout != pipe_fds[1]) {
-            // stdout was redirected to a file, but a pipe was created. Close unused write end.
             close(pipe_fds[1]);
             pipe_fds[1] = -1;
         }
@@ -658,7 +634,6 @@ int execute_pipeline(Pipeline *pipeline) {
 
         if (!is_last_cmd) {
             if (redirection_error || (cmd->builtin_idx != -1 && cmd->exit_status !=0) || (cmd->builtin_idx == -1 && cmd->pid ==0 && cmd->exit_status !=0) ) {
-                // If current command failed and was supposed to feed a pipe
                 if (next_input_fd_temp != -1 && next_input_fd_temp == pipe_fds[0]) {
                     // The write end (pipe_fds[1]) should have been closed or not used.
                     // The read end (pipe_fds[0] / next_input_fd_temp) will give EOF.
@@ -666,13 +641,11 @@ int execute_pipeline(Pipeline *pipeline) {
             }
             input_fd_for_current_cmd = next_input_fd_temp;
             if (input_fd_for_current_cmd == -1 ) { // Pipe was closed due to output redirection
-                // Create a closed pipe for the next command to read EOF from
                 int dummy_pipe[2];
                 if(pipe(dummy_pipe) == 0) {
                     close(dummy_pipe[1]); // Close write end immediately
                     input_fd_for_current_cmd = dummy_pipe[0]; // Next command reads EOF
                 } else {
-                    // Fallback, though pipe creation failure is serious
                     input_fd_for_current_cmd = shell_original_stdin;
                 }
             }
@@ -688,10 +661,8 @@ int execute_pipeline(Pipeline *pipeline) {
             else if (WIFSIGNALED(status)) cmd->exit_status = 128 + WTERMSIG(status);
             last_cmd_status = cmd->exit_status;
         } else if (cmd->arg_count > 0 || cmd->input_file || cmd->output_file_stdout || cmd->output_file_stderr) {
-            // Builtin, command not found, or redirection-only
             last_cmd_status = cmd->exit_status;
         }
-        // If it's an empty command segment that parser let through, its status would be 0.
     }
 
 cleanup_and_exit_pipeline:
@@ -705,7 +676,6 @@ cleanup_and_exit_pipeline:
 
     return last_cmd_status;
 }
-
 
 int builtin_echo(int argc, char **argv) {
     for (int i = 1; i < argc; i++) { printf("%s", argv[i]); if (i < argc - 1) printf(" "); }
@@ -733,8 +703,6 @@ int builtin_exit_shell(int argc, char **argv) {
             return 1; // Bash doesn't exit in this case, returns error
         }
     }
-    // If valid_arg is false (due to non-numeric first arg), shell should still exit with that error code.
-    // If argc == 1 (just "exit"), exit_code remains 0 (or status of last command, but tests expect 0).
     
     da_free(&current_completion_matches, true);
     if (rl_clear_history) rl_clear_history();
@@ -744,13 +712,6 @@ int builtin_exit_shell(int argc, char **argv) {
 
 int builtin_type(int argc, char **argv) {
     if (argc < 2) {
-        // "type" with no args is not an error in bash, it does nothing and returns 0.
-        // However, the test "type_multiple_args.sh" expects "usage: type..." for "type" alone.
-        // Reverting to original error for compliance with that specific test if it exists.
-        // If the test is about `type cmd1 cmd2`, then no-arg case is less critical.
-        // For now, let's assume no args means "do nothing, return 0" like bash.
-        // BUT the prompt example shows: "type: usage: type [-afpt] name [name ...]"
-        // So, stick to that.
         fprintf(stderr, "type: usage: type [-afpt] name [name ...]\n"); return 1;
     }
     int ret_val = 0;
@@ -770,12 +731,14 @@ int builtin_type(int argc, char **argv) {
     }
     return ret_val;
 }
+
 int builtin_pwd(int argc, char **argv) {
     char cwd_buf[FULL_PATH_BUFFER_SIZE];
     if (getcwd(cwd_buf, sizeof(cwd_buf)) != NULL) printf("%s\n", cwd_buf);
     else { perror("pwd"); return 1; }
     return 0;
 }
+
 int builtin_cd(int argc, char **argv) {
     char target_path_buf[FULL_PATH_BUFFER_SIZE];
     const char *path_to_use_const = NULL;
@@ -818,8 +781,6 @@ int builtin_cd(int argc, char **argv) {
             }
             printf("%s\n", path_to_use_const);
         } else if (strlen(argv[1]) == 0) { // "cd """
-             // Let chdir handle empty path string, it should fail.
-             // original_arg_for_error is already ""
              path_to_use_const = argv[1]; // which is ""
         }
         else {
@@ -833,15 +794,12 @@ int builtin_cd(int argc, char **argv) {
         fprintf(stderr, "cd: %s: No such file or directory\n", original_arg_for_error);
         return 1;
     }
-    // Note: an empty `effective_path` (e.g. from `cd ""`) will be passed to chdir.
-    // `chdir("")` typically fails with ENOENT.
 
     char old_pwd_buf[FULL_PATH_BUFFER_SIZE];
     bool old_pwd_set = false;
     if (getcwd(old_pwd_buf, sizeof(old_pwd_buf)) != NULL) {
         old_pwd_set = true;
     }
-
 
     if (chdir(effective_path) != 0) {
         fprintf(stderr, "cd: %s: %s\n", original_arg_for_error, strerror(errno));
@@ -864,7 +822,6 @@ int builtin_cd(int argc, char **argv) {
     return 0;
 }
 
-
 char **parse_input(const char *input_line_const, int *arg_count) {
     *arg_count = 0;
     if (input_line_const == NULL) return NULL;
@@ -882,7 +839,6 @@ char **parse_input(const char *input_line_const, int *arg_count) {
 
 
     while (*ptr && current_arg_idx < MAX_ARGS) {
-        // Skip leading whitespace for a new token
         while (*ptr && isspace((unsigned char)*ptr) && !in_single_quotes && !in_double_quotes) {
             ptr++;
         }
@@ -892,7 +848,6 @@ char **parse_input(const char *input_line_const, int *arg_count) {
         bool token_started = false;
         just_exited_quotes = false;
 
-        // Consume one token
         while (*ptr) {
             char current_char = *ptr;
             just_exited_quotes = false;
@@ -936,10 +891,7 @@ char **parse_input(const char *input_line_const, int *arg_count) {
                         if (token_pos < MAX_INPUT_LENGTH -1) token_buffer[token_pos++] = *ptr;
                         token_started = true;
                         ptr++;
-                    } else { // Trailing backslash (bash usually ignores, or error in some contexts)
-                        // For simplicity, treat as literal if at EOL, or let it be part of token if followed by space
-                        // if (token_pos < MAX_INPUT_LENGTH -1) token_buffer[token_pos++] = '\\';
-                        // token_started = true;
+                    } else { 
                         break; // End of input, backslash might be start of next line in interactive
                     }
                 } else { // Regular character
@@ -950,16 +902,12 @@ char **parse_input(const char *input_line_const, int *arg_count) {
             }
              if (!token_started && token_pos > 0) token_started = true; // If we added to buffer
              if (just_exited_quotes && *ptr && !isspace((unsigned char)*ptr) && *ptr != '\'' && *ptr != '"') {
-                // e.g. echo 'foo'bar -> foobar. Continue token.
-                // No break here, loop continues.
              } else if (just_exited_quotes) {
-                // e.g. echo 'foo' bar or echo 'foo'"bar"
                 // if next is space, token ends. if next is quote, new quote segment starts.
                 // if next is end of line, token ends.
                 // The main loop structure handles this: if space follows, it breaks outer loop.
              }
-
-        } // End of inner while (*ptr) for current token
+        }
 
         if (token_pos > 0 || token_started) { // Add token if it has content or quotes were involved
             token_buffer[token_pos] = '\0';
@@ -971,9 +919,7 @@ char **parse_input(const char *input_line_const, int *arg_count) {
             }
             current_arg_idx++;
         }
-         if (in_single_quotes || in_double_quotes) { // Unterminated quotes
-            // fprintf(stderr, "bash: unexpected EOF while looking for matching quote\n");
-            // Add what was parsed so far as a token
+         if (in_single_quotes || in_double_quotes) { 
             if(token_pos > 0){
                 token_buffer[token_pos] = '\0';
                 args[current_arg_idx] = strdup(token_buffer);
@@ -981,14 +927,12 @@ char **parse_input(const char *input_line_const, int *arg_count) {
             }
             break; // Stop parsing further
         }
-
-    } // End of outer while (*ptr && current_arg_idx < MAX_ARGS)
+    }
 
     args[current_arg_idx] = NULL;
     *arg_count = current_arg_idx;
     return args;
 }
-
 
 void free_parsed_args(char **args) {
     if (!args) return;
@@ -1029,11 +973,7 @@ int builtin_history(int argc, char **argv) {
     }
     if (argc > 2) {
         // `history foo bar` - Bash errors out "history: too many arguments"
-        // For now, let's assume this stage doesn't test that.
-        // If it does, then add error handling here.
-        // The tests for "history N" only provide one argument N.
     }
-
 
     int first_entry_to_print_idx = 0; 
     if (num_to_show < history_length) {
@@ -1048,7 +988,6 @@ int builtin_history(int argc, char **argv) {
     return 0;
 }
 
-
 BuiltinCommandEntry BUILTIN_COMMAND_TABLE[] = {
     {"echo", builtin_echo}, {"exit", builtin_exit_shell}, {"type", builtin_type},
     {"pwd", builtin_pwd}, {"cd", builtin_cd},
@@ -1056,9 +995,7 @@ BuiltinCommandEntry BUILTIN_COMMAND_TABLE[] = {
     {NULL, NULL}
 };
 
-
 int main(int argc_main, char *argv_main[]) {
-    // Ensure readline linkage for tests that might not use stdin directly
     rl_readline_version; 
     setbuf(stdout, NULL); setbuf(stderr, NULL);
 
@@ -1100,20 +1037,13 @@ int main(int argc_main, char *argv_main[]) {
     }
 
     if (line_buffer_from_readline == NULL) { 
-        // In interactive mode, readline handles printing newline on EOF if needed.
-        // If running non-interactively, and last output didn't have newline, this might be desired.
-        // The tests usually send EOF, and expect clean exit.
-        // If the terminal is in raw mode, `printf("\n")` might be needed.
-        // For CodeCrafters tests, usually not an issue.
-        // If `isatty(STDIN_FILENO)` is true, then print newline.
+
         if (isatty(STDIN_FILENO)) {
             printf("\n");
         }
     }
     da_free(&current_completion_matches, true);
     if (rl_clear_history) rl_clear_history();
-    // Consider stifle_history(0) to disable writing to ~/.history_file if that's happening by default
-    // and clear_history() to free memory used by readline history list.
-    // rl_clear_history() is already called.
+    
     return 0;
 }
