@@ -1,23 +1,22 @@
 #include <stdio.h>
-#include <stdlib.h>   // For exit(), strtol(), getenv(), free(), EXIT_FAILURE, qsort
-#include <string.h>   // For strlen, strcspn, strcmp, strncmp, strtok, strdup(), strndup
-#include <ctype.h>    // For isspace()
-#include <unistd.h>   // For access(), X_OK, fork(), execv(), chdir(), dup, dup2, close, STDOUT_FILENO, STDERR_FILENO, pipe()
-#include <sys/wait.h> // For waitpid()
-#include <sys/stat.h> // For stat(), S_ISDIR()
-#include <errno.h>    // For errno and strerror()
-#include <stdbool.h>  // For bool type
-#include <fcntl.h>    // For open() and O_* flags
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <fcntl.h>
 #include <readline/readline.h>
-#include <readline/history.h> // Required for history features
-#include <dirent.h>   // For opendir, readdir, closedir
+#include <readline/history.h>
+#include <dirent.h>
 
 #define MAX_INPUT_LENGTH 256
 #define FULL_PATH_BUFFER_SIZE 1024
 #define MAX_ARGS 64
 #define MAX_PIPELINE_SEGMENTS 16
 
-// Forward declarations
 int builtin_echo(int argc, char **argv);
 int builtin_exit_shell(int argc, char **argv);
 int builtin_type(int argc, char **argv);
@@ -39,7 +38,6 @@ typedef struct {
 } BuiltinCommandEntry;
 
 BuiltinCommandEntry BUILTIN_COMMAND_TABLE[];
-
 
 typedef struct {
     char **elements;
@@ -103,19 +101,17 @@ void da_unique(DynamicArray *da) {
     for (int i = 1; i < da->count; i++) {
         if (strcmp(da->elements[j], da->elements[i]) != 0) {
             j++;
-            if (j != i) { // If the unique element isn't already in its sorted unique place
-                da->elements[j] = da->elements[i]; // Move it
+            if (j != i) {
+                da->elements[j] = da->elements[i];
             }
         } else {
-            free(da->elements[i]); // It's a duplicate, free it
-            da->elements[i] = NULL; // Mark as NULL
+            free(da->elements[i]);
+            da->elements[i] = NULL;
         }
     }
     da->count = j + 1;
-    // Optionally, reallocate to shrink if many duplicates were removed.
-    // For now, `da->count` correctly reflects the number of unique, non-NULL elements at the start.
-}
 
+}
 
 static DynamicArray current_completion_matches;
 static int current_completion_idx;
@@ -203,7 +199,6 @@ char** shell_completion_func(const char* text_line_buffer, int start_index, int 
     return matches;
 }
 
-
 typedef struct {
     char **args;
     int arg_count;
@@ -217,12 +212,10 @@ typedef struct {
     int exit_status;
 } CommandSegment;
 
-// Actual struct definition for Pipeline
 struct Pipeline {
     CommandSegment segments[MAX_PIPELINE_SEGMENTS];
     int num_segments;
 };
-
 
 char *find_executable_in_path(const char *command_name) {
     if (command_name == NULL || strlen(command_name) == 0) return NULL;
@@ -415,10 +408,10 @@ Pipeline* parse_line_into_pipeline(const char *line_buffer_const) {
         if (strlen(start) == 0) { 
             if ( (pipeline->num_segments == 0 && next_pipe_char) || 
                  (pipeline->num_segments > 0 && next_pipe_char) || 
-                 (current_segment_str == line_copy && next_pipe_char && strlen(next_pipe_char + 1) == 0 && strlen(start)==0) || // " | "
-                 (next_pipe_char && !*(next_pipe_char +1) && strlen(start)==0) // "cmd | " (empty segment after pipe)
+                 (current_segment_str == line_copy && next_pipe_char && strlen(next_pipe_char + 1) == 0 && strlen(start)==0) ||
+                 (next_pipe_char && !*(next_pipe_char +1) && strlen(start)==0)
                 ) {
-                if (next_pipe_char) { // An actual pipe character was involved with this empty segment
+                if (next_pipe_char) {
                     fprintf(stderr, "bash: syntax error near unexpected token `|'\n");
                     syntax_error_in_pipeline = true;
                     break;
@@ -542,7 +535,7 @@ int execute_pipeline(Pipeline *pipeline) {
                 if (next_input_fd_temp != -1 && next_input_fd_temp == pipe_fds[0]) { 
                     close(next_input_fd_temp); 
                     next_input_fd_temp = -1; 
-                    pipe_fds[0] = -1; // Mark the pipe's read end as dealt with
+                    pipe_fds[0] = -1;
                 }
             }
         }
@@ -560,7 +553,7 @@ int execute_pipeline(Pipeline *pipeline) {
 
         if (redirection_error) {
             last_cmd_status = cmd->exit_status;
-            if (user_redirect_in_fd != -1 && current_cmd_stdin != user_redirect_in_fd) close(user_redirect_in_fd); // Only if not assigned
+            if (user_redirect_in_fd != -1 && current_cmd_stdin != user_redirect_in_fd) close(user_redirect_in_fd);
             if (user_redirect_out_fd != -1 && current_cmd_stdout != user_redirect_out_fd) close(user_redirect_out_fd);
             if (user_redirect_err_fd != -1 && current_cmd_stderr != user_redirect_err_fd) close(user_redirect_err_fd);
             
@@ -581,7 +574,7 @@ int execute_pipeline(Pipeline *pipeline) {
             if (dup2(current_cmd_stderr, STDERR_FILENO) == -1) perror("dup2 stderr for builtin");
 
             if (current_cmd_stdin != shell_original_stdin && current_cmd_stdin != input_fd_for_current_cmd) close(current_cmd_stdin);
-            if (current_cmd_stdout != shell_original_stdout && current_cmd_stdout != (pipe_fds[1] == -1 ? -2 : pipe_fds[1])) close(current_cmd_stdout); // -2 to ensure not equal if pipe_fds[1] is -1
+            if (current_cmd_stdout != shell_original_stdout && current_cmd_stdout != (pipe_fds[1] == -1 ? -2 : pipe_fds[1])) close(current_cmd_stdout);
             if (current_cmd_stderr != shell_original_stderr) close(current_cmd_stderr);
 
             cmd->exit_status = BUILTIN_COMMAND_TABLE[cmd->builtin_idx].handler(cmd->arg_count, cmd->args);
@@ -615,7 +608,7 @@ int execute_pipeline(Pipeline *pipeline) {
                     }
                     execv(exe_path, cmd->args);
                     fprintf(stderr, "%s: %s\n", cmd->args[0], strerror(errno));
-                    free(exe_path); exit(errno == ENOENT ? 127 : 126); // 127 for not found, 126 for other exec errors
+                    free(exe_path); exit(errno == ENOENT ? 127 : 126);
                 }
                 free(exe_path);
             }
@@ -631,20 +624,18 @@ int execute_pipeline(Pipeline *pipeline) {
             pipe_fds[1] = -1;
         }
 
-
         if (!is_last_cmd) {
             if (redirection_error || (cmd->builtin_idx != -1 && cmd->exit_status !=0) || (cmd->builtin_idx == -1 && cmd->pid ==0 && cmd->exit_status !=0) ) {
                 if (next_input_fd_temp != -1 && next_input_fd_temp == pipe_fds[0]) {
-                    // The write end (pipe_fds[1]) should have been closed or not used.
-                    // The read end (pipe_fds[0] / next_input_fd_temp) will give EOF.
+
                 }
             }
             input_fd_for_current_cmd = next_input_fd_temp;
-            if (input_fd_for_current_cmd == -1 ) { // Pipe was closed due to output redirection
+            if (input_fd_for_current_cmd == -1 ) {
                 int dummy_pipe[2];
                 if(pipe(dummy_pipe) == 0) {
-                    close(dummy_pipe[1]); // Close write end immediately
-                    input_fd_for_current_cmd = dummy_pipe[0]; // Next command reads EOF
+                    close(dummy_pipe[1]);
+                    input_fd_for_current_cmd = dummy_pipe[0];
                 } else {
                     input_fd_for_current_cmd = shell_original_stdin;
                 }
@@ -682,7 +673,7 @@ int builtin_echo(int argc, char **argv) {
     printf("\n"); return 0;
 }
 int builtin_exit_shell(int argc, char **argv) {
-    int exit_code = 0; // Default exit code
+    int exit_code = 0;
     bool valid_arg = true;
 
     if (argc > 1) {
@@ -690,24 +681,24 @@ int builtin_exit_shell(int argc, char **argv) {
         char *end_ptr;
         long val = strtol(first_arg, &end_ptr, 10);
 
-        if (first_arg == end_ptr || *end_ptr != '\0') { // Not a valid number or has trailing chars
+        if (first_arg == end_ptr || *end_ptr != '\0') {
             fprintf(stderr, "bash: exit: %s: numeric argument required\n", first_arg);
-            exit_code = 2; // Common for such errors in bash, or 255
+            exit_code = 2;
             valid_arg = false;
         } else {
-            exit_code = (int)(val & 0xFF); // Only care about the lower 8 bits for exit status
+            exit_code = (int)(val & 0xFF);
         }
 
-        if (argc > 2 && valid_arg) { // Valid numeric first arg, but more args given
+        if (argc > 2 && valid_arg) {
             fprintf(stderr, "bash: exit: too many arguments\n");
-            return 1; // Bash doesn't exit in this case, returns error
+            return 1;
         }
     }
     
     da_free(&current_completion_matches, true);
     if (rl_clear_history) rl_clear_history();
     exit(exit_code);
-    return 0; // Should not be reached
+    return 0;
 }
 
 int builtin_type(int argc, char **argv) {
@@ -750,13 +741,13 @@ int builtin_cd(int argc, char **argv) {
         fprintf(stderr, "cd: too many arguments\n"); return 1;
     }
 
-    if (argc == 1) { // "cd"
-        original_arg_for_error = "~"; // For error message if HOME not set
+    if (argc == 1) {
+        original_arg_for_error = "~";
         path_to_use_const = getenv("HOME");
-        if (path_to_use_const == NULL || strlen(path_to_use_const) == 0) { // Treat empty HOME as not set for cd
+        if (path_to_use_const == NULL || strlen(path_to_use_const) == 0) {
             fprintf(stderr, "cd: HOME not set\n"); return 1;
         }
-    } else { // argc == 2, "cd <arg>"
+    } else {
         original_arg_for_error = argv[1];
         if (strcmp(argv[1], "~") == 0) {
             path_to_use_const = getenv("HOME");
@@ -768,7 +759,7 @@ int builtin_cd(int argc, char **argv) {
             if (home_dir == NULL || strlen(home_dir) == 0) {
                 fprintf(stderr, "cd: HOME not set\n"); return 1;
             }
-            if (strcmp(home_dir, "/") == 0) { // HOME is root
+            if (strcmp(home_dir, "/") == 0) {
                  snprintf(target_path_buf, sizeof(target_path_buf), "/%s", argv[1] + 2);
             } else {
                  snprintf(target_path_buf, sizeof(target_path_buf), "%s/%s", home_dir, argv[1] + 2);
@@ -780,8 +771,8 @@ int builtin_cd(int argc, char **argv) {
                 fprintf(stderr, "cd: OLDPWD not set\n"); return 1;
             }
             printf("%s\n", path_to_use_const);
-        } else if (strlen(argv[1]) == 0) { // "cd """
-             path_to_use_const = argv[1]; // which is ""
+        } else if (strlen(argv[1]) == 0) {
+             path_to_use_const = argv[1];
         }
         else {
             path_to_use_const = argv[1];
@@ -790,7 +781,7 @@ int builtin_cd(int argc, char **argv) {
 
     char *effective_path = path_to_use_dynamic ? path_to_use_dynamic : (char*)path_to_use_const;
 
-    if (effective_path == NULL ) { // Should only happen if getenv failed and wasn't argv[1]
+    if (effective_path == NULL ) {
         fprintf(stderr, "cd: %s: No such file or directory\n", original_arg_for_error);
         return 1;
     }
@@ -837,7 +828,6 @@ char **parse_input(const char *input_line_const, int *arg_count) {
     bool in_double_quotes = false;
     bool just_exited_quotes = false;
 
-
     while (*ptr && current_arg_idx < MAX_ARGS) {
         while (*ptr && isspace((unsigned char)*ptr) && !in_single_quotes && !in_double_quotes) {
             ptr++;
@@ -867,49 +857,47 @@ char **parse_input(const char *input_line_const, int *arg_count) {
                     just_exited_quotes = true;
                     ptr++;
                 } else if (current_char == '\\' && (*(ptr+1) == '"' || *(ptr+1) == '\\' || *(ptr+1) == '$' || *(ptr+1) == '`')) {
-                    ptr++; // consume backslash
+                    ptr++;
                     if (*ptr && token_pos < MAX_INPUT_LENGTH -1) token_buffer[token_pos++] = *ptr;
                     if (*ptr) ptr++;
                 } else {
                     if (token_pos < MAX_INPUT_LENGTH -1) token_buffer[token_pos++] = current_char;
                     ptr++;
                 }
-            } else { // Not in any quotes
+            } else {
                 if (isspace((unsigned char)current_char)) {
-                    break; // End of token
+                    break;
                 } else if (current_char == '\'') {
                     in_single_quotes = true;
-                    token_started = true; // A quote starts a token if not already started
+                    token_started = true;
                     ptr++;
                 } else if (current_char == '"') {
                     in_double_quotes = true;
                     token_started = true;
                     ptr++;
                 } else if (current_char == '\\') {
-                    ptr++; // consume backslash
-                    if (*ptr) { // If there's a character after backslash
+                    ptr++;
+                    if (*ptr) {
                         if (token_pos < MAX_INPUT_LENGTH -1) token_buffer[token_pos++] = *ptr;
                         token_started = true;
                         ptr++;
                     } else { 
-                        break; // End of input, backslash might be start of next line in interactive
+                        break;
                     }
-                } else { // Regular character
+                } else {
                     if (token_pos < MAX_INPUT_LENGTH -1) token_buffer[token_pos++] = current_char;
                     token_started = true;
                     ptr++;
                 }
             }
-             if (!token_started && token_pos > 0) token_started = true; // If we added to buffer
+             if (!token_started && token_pos > 0) token_started = true;
              if (just_exited_quotes && *ptr && !isspace((unsigned char)*ptr) && *ptr != '\'' && *ptr != '"') {
              } else if (just_exited_quotes) {
-                // if next is space, token ends. if next is quote, new quote segment starts.
-                // if next is end of line, token ends.
-                // The main loop structure handles this: if space follows, it breaks outer loop.
+
              }
         }
 
-        if (token_pos > 0 || token_started) { // Add token if it has content or quotes were involved
+        if (token_pos > 0 || token_started) {
             token_buffer[token_pos] = '\0';
             args[current_arg_idx] = strdup(token_buffer);
             if (!args[current_arg_idx]) {
@@ -925,7 +913,7 @@ char **parse_input(const char *input_line_const, int *arg_count) {
                 args[current_arg_idx] = strdup(token_buffer);
                 if (!args[current_arg_idx]) { /* error handling */ } else {current_arg_idx++;}
             }
-            break; // Stop parsing further
+            break;
         }
     }
 
@@ -956,23 +944,18 @@ int builtin_history(int argc, char **argv) {
     if (argc > 1) {
         char *endptr;
         long count = strtol(argv[1], &endptr, 10);
-        if (*endptr == '\0' && argv[1] != endptr) { // Successfully parsed an integer
-            if (count >= 0) { // Non-negative count
+        if (*endptr == '\0' && argv[1] != endptr) {
+            if (count >= 0) {
                  num_to_show = (int)count;
             } else {
-                // Negative count: Bash seems to show all history or error. Let's show all.
-                // Or print error: "history: %s: invalid option" for negative or non-numeric
-                // The tests expect specific behavior for history N.
-                // If N is not a positive integer, they might expect all or error.
-                // For now, if not positive int, show all.
+
             }
         } else {
-             // Argument is not a valid number. Bash might show error or all.
-             // The test `history_invalid_arg.sh` implies it should still show all if arg is non-numeric.
+
         }
     }
     if (argc > 2) {
-        // `history foo bar` - Bash errors out "history: too many arguments"
+
     }
 
     int first_entry_to_print_idx = 0; 
